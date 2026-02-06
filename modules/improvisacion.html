@@ -72,7 +72,7 @@
 
         <!-- SCORE CONTAINER -->
         <!-- Fixed height for 3 rows of music -->
-        <div id="music-container" style="height: 600px; display:block; padding: 20px;">
+        <div id="music-container" style="display:block; padding: 20px; position: relative;">
             <div id="cursor-line"></div>
             <div id="notation-output"></div>
         </div>
@@ -458,6 +458,13 @@
                 this.drawSystem(bars.slice(0, 4), 0, 0);
                 this.drawSystem(bars.slice(4, 8), 0, ROW_HEIGHT);
                 this.drawSystem(bars.slice(8, 12), 0, ROW_HEIGHT * 2);
+
+                const svg = this.div.querySelector('svg');
+                if (svg) {
+                    svg.setAttribute("viewBox", `0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`);
+                    svg.style.width = "100%";
+                    svg.style.height = "auto";
+                }
             }
 
             drawSystem(barsData, x, y) {

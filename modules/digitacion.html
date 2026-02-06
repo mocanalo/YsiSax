@@ -439,7 +439,16 @@
                 if (isPreview && sysWidth > currentWidth) {
                     vfContext.resize(sysWidth, CANVAS_HEIGHT);
                 } else {
-                    vfContext.resize(currentWidth, CANVAS_HEIGHT); // Reset
+                    vfContext.resize(currentWidth, CANVAS_HEIGHT);
+                }
+
+                // RESPONSIVE FIX
+                const svg = document.querySelector('#notation-output svg');
+                if (svg) {
+                    // Get current numeric width/height from attribute or context
+                    svg.setAttribute("viewBox", `0 0 ${vfContext.width} ${vfContext.height}`);
+                    svg.style.width = "100%";
+                    svg.style.height = "auto";
                 }
 
                 const system = vfFactory.System({ width: sysWidth });
