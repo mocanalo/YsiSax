@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>YsiSax - Menú Principal</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/settings.js" defer></script>
+</head>
+
+<body>
+
+
+
+    <h1>YsiSax</h1>
+
+    <div class="modules-grid">
+
+        <a href="modules/digitacion.html" class="card">
+            <span class="icon">🖐️</span>
+            <h3>Digitación</h3>
+            <p>Entrena tus dedos y reflejos</p>
+        </a>
+
+        <a href="modules/lectura_ritmica.html" class="card">
+            <span class="icon">🥁</span>
+            <h3>Lectura Rítmica</h3>
+            <p>Entrena tu precisión temporal</p>
+        </a>
+
+        <a href="modules/improvisacion.html" class="card">
+            <span class="icon">🎷</span>
+            <h3>Improvisación</h3>
+            <p>Jam Session Blues & Jazz</p>
+        </a>
+
+        <a href="modules/teoria.html" class="card">
+            <span class="icon">🧠</span>
+            <h3>Teoría</h3>
+            <p>Dominando el lenguaje musical</p>
+        </a>
+
+        <a href="https://tomplay.com" target="_blank" class="card">
+            <span class="icon">🎼</span>
+            <h3>Estudio</h3>
+            <p>Partituras interactivas (Tomplay)</p>
+        </a>
+
+        <div id="settings-card" class="card">
+            <span class="icon">⚙️</span>
+            <h3>Ajustes</h3>
+            <p>Transposición del instrumento</p>
+        </div>
+
+
+
+    </div>
+
+    <!-- Modal de Configuración -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <h2>Configuración</h2>
+            <div class="settings-option">
+                <p>Transposición del Instrumento:</p>
+                <label>
+                    <input type="radio" name="transposition" value="Eb"> Alto/Barítono (Eb)
+                </label><br>
+                <label>
+                    <input type="radio" name="transposition" value="Bb"> Tenor/Soprano (Bb)
+                </label><br>
+                <label>
+                    <input type="radio" name="transposition" value="C"> Concierto (C)
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            Settings.initModal();
+        });
+    </script>
+
+</body>
+
+</html>

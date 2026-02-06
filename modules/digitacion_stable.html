@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>YsiSax - Lectura</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../css/game.css">
+
+    <!-- Libraries -->
+    <!-- Using specific versions to ensure stability -->
+    <script src="https://unpkg.com/vexflow@4.2.2/releases/vexflow-debug.js"></script>
+    <!-- DEBUG version for console logs if needed -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tonal/browser/tonal.min.js"></script>
+
+    <!-- Core Scripts -->
+    <script src="../js/midi-core.js"></script>
+    <script src="../js/settings.js"></script>
+    <script src="../js/stats.js"></script>
+</head>
+
+<body>
+
+    <button class="back-btn" onclick="window.location.href='../index.html'">← Volver</button>
+
+    <h1 style="font-size: 2em; margin-top: 20px; margin-bottom: 20px;">Lectura Musical</h1>
+
+    <div id="game-ui">
+        <div class="controls">
+            <!-- Scale Controls -->
+            <div class="control-group">
+                <label>Escala:</label>
+                <select id="tonic-select">
+                    <option value="C">C</option>
+                    <option value="C#">C#</option>
+                    <option value="Db">Db</option>
+                    <option value="D">D</option>
+                    <option value="Eb">Eb</option>
+                    <option value="E">E</option>
+                    <option value="F">F</option>
+                    <option value="F#">F#</option>
+                    <option value="G">G</option>
+                    <option value="Ab">Ab</option>
+                    <option value="A">A</option>
+                    <option value="Bb">Bb</option>
+                    <option value="B">B</option>
+                </select>
+                <select id="scale-select">
+                    <option value="chromatic">Cromática (Todas)</option>
+                    <option value="major" selected>Mayor</option>
+                    <option value="minor">Menor (Natural)</option>
+                    <option value="harmonic minor">Menor Armónica</option>
+                    <option value="major pentatonic">Pentatónica Mayor</option>
+                    <option value="minor pentatonic">Pentatónica Menor</option>
+                    <option value="dorian">Dórica</option>
+                    <option value="mixolydian">Mixolidia</option>
+                    <option value="blues">Blues</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>BPM:</label>
+                <input type="number" id="bpm-input" value="40" min="10" max="200">
+            </div>
+            <button id="adaptive-btn" class="toggle-btn active">Adaptativo ON</button>
+            <button id="metro-btn" class="toggle-btn active">Metronomo ON</button>
+            <button id="start-btn" class="toggle-btn">LECTURA ALEATORIA</button>
+            <button id="practice-btn" class="toggle-btn">PRACTICAR ESCALA</button>
+        </div>
+        <div id="score-display"></div>
+    </div>
+
+    <div id="music-container">
+        <div id="cursor-line"></div>
+        <div id="feedback-overlay"></div>
+        <div id="practice-display"></div>
+        <!-- CHANGED: Use a DIV for VexFlow to append its own canvas/svg -->
+        <div id="notation-output"></div>
+    </div>
+
+    <div id="debug-log"></div>
+
+    <script>
+        // --- ERROR TRAPPING ---
+        function logError(msg) {
+            console.error(msg);
+            const el = document.getElementById('debug-log');
+            if (el) {
+                el.style.display = 'block';
+                el.innerText = "ERROR: " + msg;
+            }
+        }
+
+        window.addEventListener('error', e => logError(e.message));
+
+        window.onclick = async () => {
+            if (Tone && Tone.context.state !== 'running') {
+                await Tone.start();
+            }
+        };
+
+        // --- CONFIG ---
+        const VF = Vex.Flow;
+        const CANVAS_WIDTH = 1800; // Increased for 16 notes
+        const CANVAS_HEIGHT = 200;
+
+        // CSS Injection for Practice Display
+        const style = document.createElement('style');
+        style.innerHTML = `
+            #practice-display {
+                position: absolute;
+                top: 50%;
+                right: 50px;
+                transform: translateY(-50%);
+                font-size: 8rem;
+                font-weight: bold;
+                display: none;
+                z-index: 9999 !important;
+                pointer-events: none;
+                text-shadow: 2px 2px 5px rgba(0,0,0,1);
+                font-family: monospace;
+            }
+        `;
+        document.head.appendChild(style);
+
+        // --- STATE ---
+        let isPlaying = false;
+        let isPracticeMode = false;
+        let isAdaptive = true;
+        let bpm = 60;
+        let metroVol = null;
+        let consecutiveHits = 0;
+        let consecutiveMisses = 0;
+        let currentNotes = [];
+        let lastPhase = -1;
+
+        let fullRangeMidi = [];
+        let activeNotePool = [];
+        // --- INIT ---
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("DOM Loaded");
+            // Generate Full Range (Bb3 to C#6)
+            try {
+                if (typeof Tonal === 'undefined') throw new Error("Tonal missing");
+
+                const s = Tonal.Note.midi("Bb3");
+                const e = Tonal.Note.midi("C#6");
+                for (let m = s; m <= e; m++) {
+                    fullRangeMidi.push(m);
+                }
+                console.log("Full Range generated:", fullRangeMidi.length);
+            } catch (e) {
+                logError(e.message);
+                fullRangeMidi = [60, 62, 64, 65, 67, 69, 71, 72]; // Fallback C Major
+            }
+
+            // Init VexFlow Factory
+            try {
+                document.getElementById('notation-output').innerHTML = "";
+
+                // Force SVG Backend explicitly (Robuster for div)
+                vfFactory = new VF.Factory({
+                    renderer: {
+                        elementId: 'notation-output',
+                        backend: VF.Renderer.Backends.SVG,
+                        width: CANVAS_WIDTH,
+                        height: CANVAS_HEIGHT
+                    }
+                });
+                vfContext = vfFactory.getContext();
+                console.log("VF Context Created:", !!vfContext);
+
+                if (vfContext.setFont) vfContext.setFont("Arial", 10, "");
+                if (vfContext.setBackgroundFillStyle) vfContext.setBackgroundFillStyle("#eed");
+
+                // Initial Draw
+                updateNotePool();
+            } catch (e) {
+                logError("VF Init: " + e.message);
+            }
+        });
+
+        // --- SCALE LOGIC ---
+        function updateNotePool() {
+            console.log("Update Note Pool");
+            const tonic = document.getElementById('tonic-select').value;
+            const type = document.getElementById('scale-select').value;
+
+            // Reset Range on scale change
+            rangeMinIndex = 0;
+
+            // Generate pool ...
+            if (type === 'chromatic') {
+                activeNotePool = fullRangeMidi.map(m => Tonal.Note.fromMidi(m));
+            } else {
+                // ... [Existing Tonal Logic] ...
+                const scaleName = tonic + " " + type;
+                const scaleNotes = Tonal.Scale.get(scaleName).notes;
+                activeNotePool = [];
+                fullRangeMidi.forEach(m => {
+                    const noteName = Tonal.Note.fromMidi(m);
+                    const noteProps = Tonal.Note.get(noteName);
+
+                    const inScale = scaleNotes.some(sNote => Tonal.Note.get(sNote).chroma === noteProps.chroma);
+                    if (inScale) {
+                        const matchingScaleNote = scaleNotes.find(sNote => Tonal.Note.get(sNote).chroma === noteProps.chroma);
+                        let oct = Tonal.Note.get(noteName).oct || parseInt(noteName.slice(-1));
+
+                        // Fix Enharmonic Octave (e.g. B3 -> Cb4)
+                        // If we blindly use oct=3 for Cb, we get Cb3 (MIDI 47) which is wrong. We want MIDI 59.
+                        // We check oct, oct+1, oct-1 to see which one matches 'm'.
+
+                        let candidate = matchingScaleNote + oct;
+                        if (Tonal.Note.midi(candidate) !== m) {
+                            if (Tonal.Note.midi(matchingScaleNote + (oct + 1)) === m) {
+                                oct += 1;
+                            } else if (Tonal.Note.midi(matchingScaleNote + (oct - 1)) === m) {
+                                oct -= 1;
+                            }
+                        }
+
+                        activeNotePool.push(matchingScaleNote + oct);
+                    }
+                });
+            }
+
+            // Safety
+            if (activeNotePool.length === 0) activeNotePool = ["C4"];
+            console.log("Pool Size:", activeNotePool.length);
+
+            rangeMinIndex = 0;
+
+            // Default Range: Start from first Tonic (e.g. C4) instead of B3
+            const firstTonicIdx = activeNotePool.findIndex(n => n.startsWith(tonic));
+            if (firstTonicIdx !== -1) {
+                rangeMinIndex = firstTonicIdx;
+            }
+            rangeMaxIndex = activeNotePool.length - 1;
+
+            // Show Scale Preview
+            previewScale();
+        }
+
+        // --- BPM LOGIC ---
+        function changeBPM(amount) {
+            bpm += amount;
+            if (bpm < 10) bpm = 10;
+            if (bpm > 200) bpm = 200;
+
+            const input = document.getElementById('bpm-input');
+            if (input) input.value = bpm;
+
+            if (Tone.Transport.state === 'started') {
+                Tone.Transport.bpm.rampTo(bpm, 0.5);
+            }
+
+            const fb = document.getElementById('feedback-overlay');
+            if (fb) {
+                fb.style.opacity = 1;
+                if (amount > 0) {
+                    fb.innerText = "¡MÁS RÁPIDO! (" + bpm + ")";
+                    fb.style.color = "#ffbd2e";
+                } else {
+                    fb.innerText = "Tranquilo... (" + bpm + ")";
+                    fb.style.color = "#4287f5";
+                }
+                setTimeout(() => fb.style.opacity = 0, 1000);
+            }
+        }
+
+        // --- DATA MANAGEMENT ---
+
+        function previewScale() {
+            if (isPlaying) return;
+            console.log("Preview Scale");
+
+            // Show ALL notes in pool for selection
+            const previewNotes = activeNotePool.map((note, i) => ({
+                noteName: note,
+                hit: false,
+                missed: false,
+                x: 0,
+                // Visual dimming if out of range
+                outOfRange: (i < rangeMinIndex || i > rangeMaxIndex)
+            }));
+
+            currentNotes = previewNotes;
+            console.log("Preview Notes:", currentNotes.length);
+            drawRound(true); // Pass flag to enable interaction
+        }
+
+        // --- DATA MANAGEMENT ---
+        function initNoteData() {
+            // Fill 16 notes initially
+            currentNotes = [];
+            for (let i = 0; i < 16; i++) {
+                currentNotes.push({
+                    noteName: getRandomNoteName(),
+                    hit: false,
+                    missed: false,
+                    x: 0
+                });
+            }
+        }
+
+        function getRandomNoteName() {
+            // Respect Range
+            let min = rangeMinIndex;
+            let max = rangeMaxIndex;
+            if (min === -1) min = 0;
+            if (max === -1) max = activeNotePool.length - 1;
+
+            const rangeLength = max - min + 1;
+            const idx = min + Math.floor(Math.random() * rangeLength);
+            return activeNotePool[idx];
+        }
+
+        function regenerateBlock(startIndex, count) {
+            for (let i = 0; i < count; i++) {
+                const index = startIndex + i;
+                if (index < currentNotes.length) {
+                    currentNotes[index] = {
+                        noteName: getRandomNoteName(),
+                        hit: false,
+                        missed: false,
+                        x: 0
+                    };
+                }
+            }
+            drawRound();
+        }
+
+        // --- PREVIEW INTERACTION ---
+        document.getElementById('notation-output').addEventListener('click', (e) => {
+            if (isPlaying) return;
+            // Only interact in preview mode
+
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+
+            // Find note closest to click
+            let clickedIndex = -1;
+            let minDist = 9999;
+
+            currentNotes.forEach((n, i) => {
+                const dist = Math.abs(n.x - x);
+                if (dist < 30) { // Tolerance
+                    if (dist < minDist) {
+                        minDist = dist;
+                        clickedIndex = i;
+                    }
+                }
+            });
+
+            if (clickedIndex !== -1) {
+                // Logic: 
+                // If click is closer to min, set min.
+                // If closer to max, set max.
+                // Or: Single click sets min, Shift+Click sets max?
+                // Or: First click sets Min? 
+                // User said "click on notes (lowest and highest desired)".
+
+                // Let's infer: 
+                // If clicked index < currentMin, set Min.
+                // If clicked index > currentMax, set Max.
+                // If inside: Update the one it is closer to?
+
+                const distToMin = Math.abs(clickedIndex - rangeMinIndex);
+                const distToMax = Math.abs(clickedIndex - rangeMaxIndex);
+
+                if (clickedIndex < rangeMinIndex) rangeMinIndex = clickedIndex;
+                else if (clickedIndex > rangeMaxIndex) rangeMaxIndex = clickedIndex;
+                else {
+                    // Inside
+                    if (distToMin < distToMax) rangeMinIndex = clickedIndex;
+                    else rangeMaxIndex = clickedIndex;
+                }
+
+                // Verify swap
+                if (rangeMinIndex > rangeMaxIndex) {
+                    const temp = rangeMinIndex;
+                    rangeMinIndex = rangeMaxIndex;
+                    rangeMaxIndex = temp;
+                }
+
+                // Re-draw preview
+                previewScale();
+            }
+        });
+
+        // --- DRAWING LOGIC (Using EasyScore) ---
+        function drawRound(isPreview = false) {
+            try {
+                if (!vfContext) {
+                    console.warn("DrawRound: No VF Context");
+                    return;
+                }
+                if (currentNotes.length === 0) {
+                    console.warn("DrawRound: No Notes");
+                    return;
+                }
+
+                // Construct strings
+                const noteStrings = currentNotes.map(n => n.noteName + "/q");
+                // console.log("Drawing:", noteStrings.length);
+
+                vfContext.clear();
+                // Resize context if needed? Factory handles it via backend.
+
+                if (vfContext.setFillStyle) vfContext.setFillStyle("black");
+                if (vfContext.setStrokeStyle) vfContext.setStrokeStyle("black");
+
+                const score = vfFactory.EasyScore();
+
+                // Adjust system width based on note count
+                const sysWidth = isPreview ? (currentNotes.length * 50) + 100 : CANVAS_WIDTH - 20;
+
+                // Update Factory width if needed
+                if (isPreview && sysWidth > CANVAS_WIDTH) {
+                    vfContext.resize(sysWidth, CANVAS_HEIGHT);
+                } else {
+                    vfContext.resize(CANVAS_WIDTH, CANVAS_HEIGHT); // Reset
+                }
+
+                const system = vfFactory.System({ width: sysWidth });
+
+                // Dynamic width?
+                const scoreString = noteStrings.join(', ');
+                const notes = score.notes(scoreString, { stem: 'up' });
+
+                // Apply Styles
+                notes.forEach((vn, i) => {
+                    const n = currentNotes[i];
+                    if (!n) return;
+
+                    if (n.hit) vn.setStyle({ fillStyle: '#2cb613', strokeStyle: '#2cb613' });
+                    else if (n.missed) vn.setStyle({ fillStyle: '#ff0000', strokeStyle: '#ff0000' });
+                    else if (n.practiceHit) vn.setStyle({ fillStyle: '#2cb613', strokeStyle: '#2cb613' }); // Practice Highlight
+
+                    // Range Dimming (Preview)
+                    if (n.outOfRange) {
+                        vn.setStyle({ fillStyle: '#cccccc', strokeStyle: '#cccccc' });
+                    }
+                });
+
+                system.addStave({
+                    voices: [
+                        score.voice(notes, { time: isPreview ? currentNotes.length + "/4" : "16/4" })
+                    ]
+                })
+                    .addClef('treble')
+                    .addTimeSignature('4/4');
+
+                vfFactory.draw();
+
+                // Capture X positions
+                notes.forEach((vn, i) => {
+                    if (currentNotes[i]) {
+                        // VexFlow 4: getAbsoluteX() might need getStave().getX() offset?
+                        // In EasyScore/System, getAbsoluteX() is usually correct for the page.
+                        currentNotes[i].x = vn.getAbsoluteX();
+                    }
+                });
+
+            } catch (e) {
+                logError("Draw: " + e.message);
+            }
+        }
+
+        // --- GAME LOOP ---
+
+
+        function startRound() {
+            if (!isPlaying) return;
+
+            // LOCK UI
+            document.getElementById('tonic-select').disabled = true;
+            document.getElementById('scale-select').disabled = true;
+
+            // Generate Random Game Notes (user sees these during count-in)
+            initNoteData();
+            drawRound();
+
+            lastPhase = -1;
+
+            startMetronome();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- AUDIO ---
+        function startMetronome() {
+            Tone.Transport.stop();
+            Tone.Transport.cancel(); // Clear old events
+            Tone.Transport.position = 0; // Reset ticks
+
+            Tone.Transport.bpm.value = bpm;
+
+            if (metroVol) metroVol.dispose();
+            metroVol = new Tone.Volume(-20).toDestination();
+
+            new Tone.Loop(time => {
+                const btn = document.getElementById('metro-btn');
+                if (btn.innerText.includes("ON")) {
+                    // Reuse Global Volume (-20dB)
+                    new Tone.Oscillator(1000, "triangle").connect(metroVol).start(time).stop(time + 0.05);
+                }
+            }, "4n").start(0);
+
+            Tone.Transport.start();
+        }
+
+        function gameLoop() {
+            if (!isPlaying) return;
+
+            // USE TICKS FOR STABLE TIMING
+            const PPQ = Tone.Transport.PPQ;
+            const ticks = Tone.Transport.ticks;
+
+            // Count-In Duration in Ticks
+            const COUNT_IN_BEATS = 4;
+            const countInTicks = COUNT_IN_BEATS * PPQ;
+
+            const el = document.getElementById('cursor-line');
+
+            // Check Count-In
+            if (ticks < countInTicks) {
+                // Park cursor at start
+                if (currentNotes.length > 0) {
+                    el.style.transform = `translateX(${currentNotes[0].x - 20}px)`;
+                }
+                requestAnimationFrame(gameLoop);
+                return;
+            }
+
+            // Game Logic
+            const gameTicks = ticks - countInTicks;
+            const currentTotalBeats = gameTicks / PPQ;
+            const progress16 = currentTotalBeats % 16; // 0.0 to 15.99
+
+            // Phase Logic (2 phases of 8 notes)
+            const currentPhase = Math.floor(progress16 / 8) >= 1 ? 1 : 0;
+            if (currentPhase !== lastPhase) {
+                // If we enter Phase 1 (8-15), regen Phase 0 (0-7)
+                if (currentPhase === 1 && lastPhase === 0) regenerateBlock(0, 8);
+                // If we enter Phase 0 (0-7), regen Phase 1 (8-15)
+                else if (currentPhase === 0 && lastPhase === 1) regenerateBlock(8, 8);
+                lastPhase = currentPhase;
+            }
+
+            // CURSOR SYNC
+            if (currentNotes.length > 15) {
+                const noteIndex = Math.floor(progress16);
+                const subBeat = progress16 % 1;
+
+                if (currentNotes[noteIndex]) {
+                    const startX = currentNotes[noteIndex].x;
+                    let endX = startX + 50;
+                    if (noteIndex < 15 && currentNotes[noteIndex + 1]) {
+                        endX = currentNotes[noteIndex + 1].x;
+                    }
+                    // Handle wrap around visual? 
+                    // When going 15->0, endX should probably be extrapolated or wrapped.
+                    // But regenerateBlock happens so notes change. 
+                    // VexFlow 16/4 is one system.
+
+                    const cur = startX + (endX - startX) * subBeat;
+                    el.style.transform = `translateX(${cur}px)`;
+
+                    // CHECK MISS
+                    const blockStart = currentPhase === 0 ? 0 : 8;
+
+                    for (let i = blockStart; i < noteIndex; i++) {
+                        const n = currentNotes[i];
+                        if (!n.hit && !n.missed) {
+                            n.missed = true;
+
+                            // DYNAMIC DIFFICULTY - MISS LOGIC
+                            consecutiveHits = 0;
+                            consecutiveMisses++;
+
+                            if (consecutiveMisses >= 3) {
+                                if (isAdaptive) changeBPM(-5);
+                                consecutiveMisses = 0;
+                            }
+
+                            drawRound();
+                        }
+                    }
+                }
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- CONTROLS ---
+
+        // Listeners for Selects
+        document.getElementById('tonic-select').addEventListener('change', updateNotePool);
+        document.getElementById('scale-select').addEventListener('change', updateNotePool);
+
+        document.getElementById('bpm-input').addEventListener('input', (e) => {
+            bpm = parseInt(e.target.value);
+            // Update Transport immediately
+            if (Tone.Transport.state === 'started') {
+                Tone.Transport.bpm.rampTo(bpm, 0.1);
+            }
+        });
+
+        document.getElementById('start-btn').onclick = async () => {
+            console.log("Start Clicked");
+            try {
+                if (isPlaying) {
+                    console.log("Stopping...");
+                    isPlaying = false;
+                    Tone.Transport.stop();
+                    document.getElementById('start-btn').innerText = "LECTURA ALEATORIA";
+                    document.getElementById('cursor-line').style.transform = `translateX(-100px)`;
+
+                    // UNLOCK UI
+                    document.getElementById('tonic-select').disabled = false;
+                    document.getElementById('scale-select').disabled = false;
+                    updateNotePool(); // Reset to Preview Mode
+                } else {
+                    console.log("Starting...");
+                    await Tone.start();
+                    console.log("Tone Context:", Tone.context.state);
+
+                    if (window.midiCore) {
+                        console.log("Connecting MIDI...");
+                        try {
+                            await window.midiCore.connect();
+                        } catch (micErr) {
+                            console.warn("MIDI Connect Skipped:", micErr);
+                        }
+                    }
+
+                    isPlaying = true;
+
+                    consecutiveHits = 0;
+                    consecutiveMisses = 0;
+                    document.getElementById('score-display').innerText = "";
+
+                    document.getElementById('start-btn').innerText = "PARAR";
+                    console.log("Calling startRound()");
+                    startRound();
+                }
+            } catch (e) {
+                logError("Start Error: " + e.message);
+                console.error(e);
+            }
+        };
+
+        document.getElementById('metro-btn').addEventListener('click', (e) => {
+            const btn = e.target;
+            if (btn.innerText.includes("ON")) {
+                btn.innerText = "Metronomo OFF";
+                btn.classList.remove("active");
+            } else {
+                btn.innerText = "Metronomo ON";
+                btn.classList.add("active");
+            }
+        });
+
+        document.getElementById('adaptive-btn').addEventListener('click', (e) => {
+            isAdaptive = !isAdaptive;
+            const btn = e.target;
+            if (isAdaptive) {
+                btn.innerText = "Adaptativo ON";
+                btn.classList.add("active");
+            } else {
+                btn.innerText = "Adaptativo OFF";
+                btn.classList.remove("active");
+            }
+        });
+
+        document.getElementById('practice-btn').addEventListener('click', async (e) => {
+            if (isPlaying) return; // Disable if game is running
+
+            const btn = e.target;
+
+            // Toggle State
+            isPracticeMode = !isPracticeMode;
+            const display = document.getElementById('practice-display');
+
+            if (isPracticeMode) {
+                // ACTIVATE
+                btn.classList.add("active");
+                btn.innerText = "DETENER PRÁCTICA";
+                display.style.display = "block";
+                display.innerText = "En Espera..."; // Prompt
+                display.style.color = "#888";
+                document.getElementById('start-btn').disabled = true;
+
+                // --- ENSURE AUDIO & MIDI ---
+                if (Tone.context.state !== 'running') await Tone.start();
+
+                if (window.midiCore && !window.midiCore.isConnected) {
+                    try {
+                        console.log("Practice Mode: Connecting MIDI...");
+                        await window.midiCore.connect();
+                    } catch (err) {
+                        logError("MIDI Connect Failed: " + err);
+                    }
+                }
+
+            } else {
+                // DEACTIVATE
+                btn.classList.remove("active");
+                btn.innerText = "PRACTICAR ESCALA";
+                display.style.display = "none";
+                document.getElementById('start-btn').disabled = false;
+            }
+        });
+
+        // --- AUDIO ---
+        function startMetronome() {
+            Tone.Transport.stop();
+            Tone.Transport.cancel();
+            Tone.Transport.bpm.value = bpm;
+
+            // Use Tone.Loop
+            new Tone.Loop(time => {
+                const btn = document.getElementById('metro-btn');
+                if (btn.innerText.includes("ON")) {
+                    new Tone.Oscillator(1000, "triangle").toDestination().start(time).stop(time + 0.05);
+                }
+            }, "4n").start(0);
+
+            Tone.Transport.start();
+        }
+
+        // --- MIDI CHECK ---
+        if (window.midiCore) {
+            window.midiCore.subscribe(async (midi) => {
+                // --- PRACTICE MODE (PRE-GAME) ---
+                if (isPracticeMode) {
+                    if (Tone.context.state !== 'running') await Tone.start();
+
+                    const playedName = Tonal.Note.fromMidi(midi);
+                    const interval = getTranspositionInterval();
+                    const written = Tonal.Note.transpose(playedName, interval);
+
+                    const el = document.getElementById('practice-display');
+                    el.innerText = written;
+                    console.log("Practice Hit:", written);
+
+                    const tonic = document.getElementById('tonic-select').value;
+                    const type = document.getElementById('scale-select').value;
+                    const scaleName = tonic + " " + type;
+                    const scaleNotes = Tonal.Scale.get(scaleName).notes;
+                    const writtenProp = Tonal.Note.get(written);
+                    const inScale = scaleNotes.some(n => Tonal.Note.get(n).chroma === writtenProp.chroma);
+
+                    if (inScale) {
+                        el.style.color = "#2cb613";
+
+                        // Highlight on Staff
+                        let foundFn = false;
+                        currentNotes.forEach(n => {
+                            // Compare MIDI values to ignore enharmonics issues (e.g. C# vs Db)
+                            if (Tonal.Note.midi(n.noteName) === Tonal.Note.midi(written)) {
+                                n.practiceHit = true;
+                                foundFn = true;
+                                setTimeout(() => {
+                                    n.practiceHit = false;
+                                    // Trigger redraw to clear, ensure context exists and no conflict
+                                    if (isPracticeMode) drawRound(true);
+                                }, 500); // 500ms visible time
+                            }
+                        });
+
+                        if (foundFn) drawRound(true);
+
+                    } else {
+                        el.style.color = "#ff4444";
+                        const synth = new Tone.Synth({
+                            oscillator: { type: "sawtooth" },
+                            envelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.2 }
+                        }).toDestination();
+                        synth.volume.value = -5;
+                        synth.triggerAttackRelease("Eb2", "4n");
+                    }
+                    return;
+                }
+
+                if (!isPlaying) return;
+
+                // USE TICKS FOR STABLE TIMING
+                const PPQ = Tone.Transport.PPQ;
+                const ticks = Tone.Transport.ticks;
+
+                const COUNT_IN_BEATS = 4;
+                const countInTicks = COUNT_IN_BEATS * PPQ;
+
+                if (ticks < countInTicks) return; // Count-in phase
+
+                const gameTicks = ticks - countInTicks;
+                const currentTotalBeats = gameTicks / PPQ;
+                const progress16 = currentTotalBeats % 16; // FIX: Cycle over 16 notes, not 8
+
+                if (currentNotes.length < 1) return;
+
+                const noteIndex = Math.round(progress16);
+                // Ensure we don't access index 16 on the exact wrap boundary
+                const targetIndex = noteIndex % 16;
+                const target = currentNotes[targetIndex];
+
+                if (target && !target.hit && !target.missed) {
+                    const playedName = Tonal.Note.fromMidi(midi);
+                    const interval = getTranspositionInterval();
+                    const written = Tonal.Note.transpose(playedName, interval);
+
+                    if (Tonal.Note.midi(written) === Tonal.Note.midi(target.noteName)) {
+                        target.hit = true;
+
+                        // DYNAMIC DIFFICULTY - HIT LOGIC
+                        consecutiveMisses = 0;
+                        consecutiveHits++;
+
+                        // STATS
+                        const tonic = document.getElementById('tonic-select').value;
+                        const scale = document.getElementById('scale-select').value;
+                        const isFullRange = (rangeMinIndex === 0 && rangeMaxIndex === activeNotePool.length - 1);
+
+                        // 1. Record Streak for this BPM
+                        GameStats.recordHit(tonic, scale, bpm, consecutiveHits, isFullRange);
+
+                        const fb = document.getElementById('feedback-overlay');
+                        fb.innerText = "BIEN";
+                        fb.style.color = "#2cb613";
+                        fb.style.opacity = 1;
+                        setTimeout(() => fb.style.opacity = 0, 400);
+
+                        if (consecutiveHits >= 8) {
+                            if (isAdaptive) {
+                                changeBPM(5);
+                                // 2. Record Max BPM reached (the new BPM)
+                                GameStats.recordLevelUp(tonic, scale, bpm, isFullRange);
+                            }
+                            consecutiveHits = 0;
+                        }
+
+                        drawRound();
+                    }
+                }
+            });
+        }
+
+        function getTranspositionInterval() {
+            if (typeof Settings !== 'undefined') {
+                const key = Settings.getTransposition();
+                if (key === 'Eb') return 'M6';
+                if (key === 'Bb') return 'M2';
+            }
+            return 'P1';
+        }
+
+    </script>
+</body>
+
+</html>

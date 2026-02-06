@@ -1,0 +1,140 @@
+body {
+    background: linear-gradient(circle at top center, #1a1a2e, #000);
+    overflow: hidden;
+}
+
+#game-ui {
+    width: 100%;
+    max-width: 1250px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.controls {
+    display: flex;
+    gap: 20px;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 10px 20px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-main);
+}
+
+input[type="number"] {
+    background: #222;
+    border: 1px solid #444;
+    color: #fff;
+    padding: 5px;
+    border-radius: 5px;
+    width: 60px;
+    text-align: center;
+}
+
+.toggle-btn {
+    background: #333;
+    border: 1px solid #555;
+    color: #fff;
+    padding: 5px 15px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.toggle-btn.active {
+    background: var(--accent-gold);
+    color: #000;
+    font-weight: bold;
+    box-shadow: 0 0 10px var(--accent-gold);
+}
+
+#start-btn,
+#practice-btn {
+    border: 1px solid var(--accent-gold);
+    font-weight: bold;
+}
+
+#start-btn:hover,
+#practice-btn:hover {
+    background: rgba(255, 215, 0, 0.2);
+    color: var(--accent-gold);
+}
+
+#score-display {
+    font-size: 2rem;
+    color: var(--accent-gold);
+    font-weight: bold;
+}
+
+/* Container for Sheet Music */
+#music-container {
+    position: relative;
+    width: 100%;
+    max-width: 1850px;
+    height: 250px;
+    background: #ffffff;
+    border: 4px solid #333;
+    border-radius: 10px;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+
+canvas {
+    display: block;
+}
+
+/* The Moving Cursor */
+#cursor-line {
+    position: absolute;
+    top: 20px;
+    bottom: 20px;
+    left: 0;
+    width: 4px;
+    background-color: rgba(255, 0, 0, 0.6);
+    z-index: 10;
+    border-radius: 2px;
+    transform: translateX(-100px);
+    /* Hidden initially */
+    pointer-events: none;
+    box-shadow: 0 0 10px rgba(255, 0, 0, 0.4);
+    transition: transform 0.1s linear;
+    /* Smooth micro-steps */
+}
+
+/* Debug Error Box */
+#debug-log {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: rgba(255, 0, 0, 0.8);
+    color: white;
+    padding: 5px;
+    font-family: monospace;
+    font-size: 10px;
+    display: none;
+    z-index: 9999;
+}
+
+#feedback-overlay {
+    position: absolute;
+    top: 10%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 4rem;
+    font-weight: bold;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 20;
+    text-shadow: 2px 2px 0 #000;
+}
